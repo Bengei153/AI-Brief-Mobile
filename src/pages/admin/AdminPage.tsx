@@ -1,0 +1,1939 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useCallback, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getCategories, createCategory } from '../../api/categories';
+import { getTags, createTag } from '../../api/tags';
+import { createAiTool } from '../../api/aiTools';
+import { ArticlePillar } from '../../types/api';
+import { getAdminDrafts, createArticle, publishArticle, deleteArticle, triggerNewsIngestion } from '../../api/articles';
+import { sendNewsletterNow } from '../../api/newsletter';
+import { getAdminTutorialDrafts, createTutorial, publishTutorial, deleteTutorial } from '../../api/tutorials';
+import { getAdminVideoDrafts, publishVideo, deleteVideo, triggerVideoIngestion } from '../../api/videos';
+import { getAdminCourseDrafts, discoverCourses, publishCourse, deleteCourse } from '../../api/courses';
+import { getCourseCategories, createCourseCategory, deleteCourseCategory } from '../../api/courseCategories';
+import { getAiTaskConfigs, setAiTaskConfig, getArticleWritingTemplate, updateArticleWritingTemplate } from '../../api/aiSettings';
+import { ImageUploadWidget } from '../../components/ImageUploadWidget';
+import { IngestionLogsPanel } from '../../components/IngestionLogsPanel';
+import { AiToolDiscoveryPanel } from '../../components/AiToolDiscoveryPanel';
+import { EarnStoryDiscoveryPanel } from '../../components/EarnStoryDiscoveryPanel';
+import { PremiumSubscribersPanel } from '../../components/PremiumSubscribersPanel';
+import { BenchmarksAdminPanel } from '../../components/BenchmarksAdminPanel';
+import { ShieldCheck, Layers, Clipboard, Radio, Calendar, Plus, ExternalLink, Sliders, CheckSquare, Sparkles, Loader2, BookOpen, Mail, GraduationCap, Trash2, PlayCircle, Search, Cpu } from 'lucide-react';
+import { DifficultyLevel, AiProvider, AiTask } from '../../types/api';
+
+const PILLARS: { value: ArticlePillar; label: string }[] = [
+  { value: 'AIForStudents', label: 'AI for Students' },
+  { value: 'AIForWork', label: 'AI for Work' },
+  { value: 'AINews', label: 'AI News' },
+  { value: 'AIToolSpotlight', label: 'AI Tool Spotlight' },
+  { value: 'FutureOfAI', label: 'Future of AI' },
+];
+
+const DIFFICULTIES: DifficultyLevel[] = ['Beginner', 'Intermediate', 'Advanced'];
+
+const fieldClass =
+  'w-full text-sm px-3 py-2.5 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 bg-stone-50/50';
+
+const primaryButtonClass =
+  'bg-stone-900 hover:bg-stone-800 disabled:opacity-75 text-white font-bold py-2.5 px-5 rounded-lg text-xs shadow-md transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer';
+
+export const AdminPage: React.FC = () => {
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<'queue' | 'article' | 'tool' | 'earn-story' | 'premium' | 'taxonomy' | 'tutorial' | 'video' | 'course' | 'ai-settings' | 'ingestion' | 'benchmarks'>('queue');
+  const [focusRunId, setFocusRunId] = useState<string | null>(null);
+  const clearFocusRun = useCallback(() => setFocusRunId(null), []);
+
+  // Success notifications
+  const [notify, setNotify] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setNotify({ type, message });
+    setTimeout(() => setNotify(null), 4000);
+  };
+
+  // --- 1. TanStack Queries ---
+  const { data: drafts, isLoading: isDraftsLoading } = useQuery({
+    queryKey: ['admin-drafts'],
+    queryFn: getAdminDrafts,
+  });
+
+  const { data: tutorialDrafts, isLoading: isTutorialDraftsLoading } = useQuery({
+    queryKey: ['admin-tutorial-drafts'],
+    queryFn: getAdminTutorialDrafts,
+  });
+
+  const { data: videoDrafts, isLoading: isVideoDraftsLoading } = useQuery({
+    queryKey: ['admin-video-drafts'],
+    queryFn: getAdminVideoDrafts,
+  });
+
+  const { data: categories } = useQuery({
+    queryKey: ['categories'],
+    queryFn: getCategories,
+  });
+
+  const { data: tags } = useQuery({
+    queryKey: ['tags'],
+    queryFn: getTags,
+  });
+
+  // --- 2. Mutations ---
+  const publishMutation = useMutation({
+    mutationFn: publishArticle,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['articles'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-articles'] });
+      showNotification('success', 'Article draft published successfully!');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to publish draft.');
+    },
+  });
+
+  const deleteArticleMutation = useMutation({
+    mutationFn: deleteArticle,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['articles'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-articles'] });
+      showNotification('success', 'Article deleted.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to delete article.');
+    },
+  });
+
+  const handleDeleteArticle = (articleId: string, title: string) => {
+    if (window.confirm(`Delete "${title}"? This can't be undone.`)) {
+      deleteArticleMutation.mutate(articleId);
+    }
+  };
+
+  const ingestMutation = useMutation({
+    mutationFn: triggerNewsIngestion,
+    onSuccess: (result) => {
+      showNotification('success', result.message);
+      // Runs as a background job now, not inline — give it a little time
+      // to actually finish before refreshing the drafts list.
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['admin-drafts'] });
+      }, 45000);
+      if (result.runId) {
+       setFocusRunId(result.runId);
+       setActiveTab('ingestion');
+     }
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to start news ingestion.');
+    },
+  });
+
+  const sendNewsletterMutation = useMutation({
+    mutationFn: () => sendNewsletterNow(5),
+    onSuccess: (result) => {
+      if (result.recipientCount > 0) {
+        showNotification('success', `Sent to ${result.recipientCount} subscribers (${result.articleCount} articles).`);
+      } else {
+        showNotification('error', result.errors[0] || 'Nothing was sent.');
+      }
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to send newsletter.');
+    },
+  });
+
+  // --- 3. Form States & Submissions ---
+  // A. New Briefing Draft
+  const [artTitle, setArtTitle] = useState('');
+  const [artSummary, setArtSummary] = useState('');
+  const [artBody, setArtBody] = useState('');
+  const [artPillar, setArtPillar] = useState<ArticlePillar>('AINews');
+  const [artCategoryId, setArtCategoryId] = useState('');
+  const [artSelectedTagIds, setArtSelectedTagIds] = useState<string[]>([]);
+  const [artSourceType, setArtSourceType] = useState<'Original' | 'Aggregated' | 'AIGenerated'>('Original');
+  const [artSourceName, setArtSourceName] = useState('');
+  const [artSourceUrl, setArtSourceUrl] = useState('');
+  const [artCoverImageUrl, setArtCoverImageUrl] = useState('');
+  const [isCreatingArticle, setIsCreatingArticle] = useState(false);
+
+  const handleCreateArticle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!artTitle || !artSummary || !artBody || !artCategoryId) {
+      showNotification('error', 'Please complete all required fields.');
+      return;
+    }
+    setIsCreatingArticle(true);
+    try {
+      await createArticle({
+        title: artTitle,
+        summary: artSummary,
+        body: artBody,
+        pillar: artPillar,
+        categoryId: artCategoryId,
+        tagIds: artSelectedTagIds,
+        sourceType: artSourceType,
+        sourceName: artSourceName || null,
+        sourceUrl: artSourceUrl || null,
+        coverImageUrl: artCoverImageUrl || null,
+      });
+
+      showNotification('success', 'Draft article created successfully and queued!');
+      
+      // Reset Briefing Form
+      setArtTitle('');
+      setArtSummary('');
+      setArtBody('');
+      setArtSelectedTagIds([]);
+      setArtSourceName('');
+      setArtSourceUrl('');
+      setArtCoverImageUrl('');
+      
+      // Invalidate list queries
+      queryClient.invalidateQueries({ queryKey: ['admin-drafts'] });
+      setActiveTab('queue'); // redirect to queue to publish it
+    } catch (err: any) {
+      showNotification('error', err.detail || 'Failed to create draft article.');
+    } finally {
+      setIsCreatingArticle(false);
+    }
+  };
+
+  // B. New Tutorial Draft
+  const [tutTitle, setTutTitle] = useState('');
+  const [tutSummary, setTutSummary] = useState('');
+  const [tutBody, setTutBody] = useState('');
+  const [tutToolName, setTutToolName] = useState('');
+  const [tutDifficulty, setTutDifficulty] = useState<DifficultyLevel>('Beginner');
+  const [tutCoverImageUrl, setTutCoverImageUrl] = useState('');
+  const [isCreatingTutorial, setIsCreatingTutorial] = useState(false);
+
+  const handleCreateTutorial = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tutTitle || !tutSummary || !tutBody || !tutToolName) {
+      showNotification('error', 'Please complete all required fields.');
+      return;
+    }
+    setIsCreatingTutorial(true);
+    try {
+      await createTutorial({
+        title: tutTitle,
+        summary: tutSummary,
+        body: tutBody,
+        toolName: tutToolName,
+        difficultyLevel: tutDifficulty,
+        coverImageUrl: tutCoverImageUrl || null,
+      });
+
+      showNotification('success', 'Draft tutorial created successfully!');
+
+      setTutTitle('');
+      setTutSummary('');
+      setTutBody('');
+      setTutToolName('');
+      setTutCoverImageUrl('');
+
+      queryClient.invalidateQueries({ queryKey: ['admin-tutorial-drafts'] });
+    } catch (err: any) {
+      showNotification('error', err.detail || 'Failed to create draft tutorial.');
+    } finally {
+      setIsCreatingTutorial(false);
+    }
+  };
+
+  const publishTutorialMutation = useMutation({
+    mutationFn: publishTutorial,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-tutorial-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['tutorials'] });
+      showNotification('success', 'Tutorial published successfully!');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to publish tutorial.');
+    },
+  });
+
+  const deleteTutorialMutation = useMutation({
+    mutationFn: deleteTutorial,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-tutorial-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['tutorials'] });
+      showNotification('success', 'Tutorial deleted.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to delete tutorial.');
+    },
+  });
+
+  const handleDeleteTutorial = (tutorialId: string, title: string) => {
+    if (window.confirm(`Delete "${title}"? This can't be undone.`)) {
+      deleteTutorialMutation.mutate(tutorialId);
+    }
+  };
+
+  const videoIngestMutation = useMutation({
+    mutationFn: triggerVideoIngestion,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-video-drafts'] });
+      if (result.errors.length > 0) {
+        const more = result.errors.length > 1 ? ` (+${result.errors.length - 1} more failed)` : '';
+        showNotification(
+          'error',
+          result.draftsCreated > 0
+            ? `Created ${result.draftsCreated} of ${result.videosFetched}, but ${result.errors.length} failed: ${result.errors[0]}${more}`
+            : `All ${result.videosFetched} videos failed: ${result.errors[0]}${more}`
+        );
+      } else if (result.draftsCreated > 0) {
+        showNotification('success', `Fetched ${result.videosFetched} videos, created ${result.draftsCreated} new drafts.`);
+      } else {
+        showNotification('success', `Checked ${result.videosFetched} videos — nothing new (${result.skipped} already seen).`);
+      }
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to run video ingestion.');
+    },
+  });
+
+  const publishVideoMutation = useMutation({
+    mutationFn: publishVideo,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-video-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['videos'] });
+      showNotification('success', 'Video published successfully!');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to publish video.');
+    },
+  });
+
+  const deleteVideoMutation = useMutation({
+    mutationFn: deleteVideo,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-video-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['videos'] });
+      showNotification('success', 'Video deleted.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to delete video.');
+    },
+  });
+
+  const handleDeleteVideo = (videoId: string, title: string) => {
+    if (window.confirm(`Delete "${title}"? This can't be undone.`)) {
+      deleteVideoMutation.mutate(videoId);
+    }
+  };
+
+  // G. Course Categories — full CRUD, so the admin can grow the taxonomy
+  // freely as the catalog expands, rather than a fixed list.
+  const { data: courseCategories } = useQuery({
+    queryKey: ['course-categories'],
+    queryFn: getCourseCategories,
+  });
+
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  const createCourseCategoryMutation = useMutation({
+    mutationFn: (name: string) => {
+      const slug = name.trim().toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
+      return createCourseCategory({ name: name.trim(), slug });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['course-categories'] });
+      setNewCategoryName('');
+      showNotification('success', 'Category added.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to add category.');
+    },
+  });
+
+  const deleteCourseCategoryMutation = useMutation({
+    mutationFn: deleteCourseCategory,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['course-categories'] });
+      showNotification('success', 'Category deleted.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || "Failed to delete category — it's probably still in use by a course.");
+    },
+  });
+
+  const handleAddCourseCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCategoryName.trim()) return;
+    createCourseCategoryMutation.mutate(newCategoryName);
+  };
+
+  const handleDeleteCourseCategory = (categoryId: string, name: string) => {
+    if (window.confirm(`Delete category "${name}"? This only works if no courses use it.`)) {
+      deleteCourseCategoryMutation.mutate(categoryId);
+    }
+  };
+
+  // H. Courses — discovery is topic-driven (admin types a topic and picks
+  // a category) rather than pulling from a fixed list of sources like
+  // Video ingestion does.
+  const [courseTopic, setCourseTopic] = useState('');
+  const [discoveryCategoryId, setDiscoveryCategoryId] = useState('');
+
+  const { data: courseDrafts, isLoading: isCourseDraftsLoading } = useQuery({
+    queryKey: ['admin-course-drafts'],
+    queryFn: getAdminCourseDrafts,
+  });
+
+  const courseDiscoveryMutation = useMutation({
+    mutationFn: () => discoverCourses(courseTopic.trim(), discoveryCategoryId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-course-drafts'] });
+      if (result.errors.length > 0) {
+        const more = result.errors.length > 1 ? ` (+${result.errors.length - 1} more failed)` : '';
+        showNotification(
+          'error',
+          result.draftsCreated > 0
+            ? `Added ${result.draftsCreated} of ${result.candidatesFound} courses, but ${result.errors.length} failed: ${result.errors[0]}${more}`
+            : `All ${result.candidatesFound} courses failed: ${result.errors[0]}${more}`
+        );
+      } else if (result.draftsCreated > 0) {
+        showNotification('success', `Found ${result.candidatesFound} courses, added ${result.draftsCreated} new drafts.`);
+      } else {
+        showNotification('success', `Found ${result.candidatesFound} courses — nothing new (${result.skipped} already seen).`);
+      }
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to search for courses.');
+    },
+  });
+
+  const handleDiscoverCourses = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!courseTopic.trim() || !discoveryCategoryId) return;
+    courseDiscoveryMutation.mutate();
+  };
+
+  const publishCourseMutation = useMutation({
+    mutationFn: publishCourse,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-course-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['courses'] });
+      showNotification('success', 'Course published successfully!');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to publish course.');
+    },
+  });
+
+  const deleteCourseMutation = useMutation({
+    mutationFn: deleteCourse,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-course-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['courses'] });
+      showNotification('success', 'Course deleted.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to delete course.');
+    },
+  });
+
+  const handleDeleteCourse = (courseId: string, title: string) => {
+    if (window.confirm(`Delete "${title}"? This can't be undone.`)) {
+      deleteCourseMutation.mutate(courseId);
+    }
+  };
+
+  // I. AI Settings — per-task provider/model switching + the editable
+  // article-writing template.
+  const { data: aiTaskConfigs } = useQuery({
+    queryKey: ['ai-task-configs'],
+    queryFn: getAiTaskConfigs,
+    enabled: activeTab === 'ai-settings',
+  });
+
+  const { data: articleTemplate } = useQuery({
+    queryKey: ['article-writing-template'],
+    queryFn: getArticleWritingTemplate,
+    enabled: activeTab === 'ai-settings',
+  });
+
+  const [templateDraft, setTemplateDraft] = useState<string | null>(null);
+
+  const setTaskConfigMutation = useMutation({
+    mutationFn: ({ task, provider, model }: { task: AiTask; provider: AiProvider; model: string }) =>
+      setAiTaskConfig(task, provider, model),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-task-configs'] });
+      showNotification('success', 'AI provider updated.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to update AI provider.');
+    },
+  });
+
+  const updateTemplateMutation = useMutation({
+    mutationFn: (promptTemplate: string) => updateArticleWritingTemplate(promptTemplate),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['article-writing-template'] });
+      showNotification('success', 'Article writing template updated.');
+    },
+    onError: (err: any) => {
+      showNotification('error', err.detail || 'Failed to update template.');
+    },
+  });
+
+  const handleSaveTemplate = () => {
+    if (templateDraft === null) return;
+    updateTemplateMutation.mutate(templateDraft);
+  };
+
+  const handleToggleFormTag = (id: string) => {
+    setArtSelectedTagIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  // B. New AI Tool
+  const [toolName, setToolName] = useState('');
+  const [toolSlug, setToolSlug] = useState('');
+  const [toolDesc, setToolDesc] = useState('');
+  const [toolUrl, setToolUrl] = useState('');
+  const [toolPricing, setToolPricing] = useState('');
+  const [toolTags, setToolTags] = useState('');
+  const [toolLogoUrl, setToolLogoUrl] = useState<string | null>(null);
+  const [isCreatingTool, setIsCreatingTool] = useState(false);
+
+  const handleCreateTool = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!toolName || !toolSlug || !toolDesc || !toolUrl || !toolPricing || !toolTags) {
+      showNotification('error', 'Please complete all fields for the tool.');
+      return;
+    }
+    setIsCreatingTool(true);
+    try {
+      await createAiTool({
+        name: toolName,
+        slug: toolSlug,
+        description: toolDesc,
+        websiteUrl: toolUrl,
+        pricing: toolPricing,
+        tags: toolTags,
+        logoUrl: toolLogoUrl,
+      });
+      showNotification('success', `AI Tool '${toolName}' added successfully to the directory!`);
+      
+      // Reset form
+      setToolName('');
+      setToolSlug('');
+      setToolDesc('');
+      setToolUrl('');
+      setToolPricing('');
+      setToolTags('');
+      setToolLogoUrl(null);
+      
+      queryClient.invalidateQueries({ queryKey: ['ai-tools'] });
+    } catch (err: any) {
+      showNotification('error', err.detail || 'Failed to add AI Tool.');
+    } finally {
+      setIsCreatingTool(false);
+    }
+  };
+
+  // C. Taxonomy (Category & Tag creation)
+  const [catName, setCatName] = useState('');
+  const [catSlug, setCatSlug] = useState('');
+  const [catPillar, setCatPillar] = useState<ArticlePillar>('AINews');
+  const [catDesc, setCatDesc] = useState('');
+  const [isCreatingCat, setIsCreatingCat] = useState(false);
+
+  const [tagName, setTagName] = useState('');
+  const [tagSlug, setTagSlug] = useState('');
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
+
+  const handleCreateCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!catName || !catSlug || !catDesc) {
+      showNotification('error', 'Please complete all fields for the category.');
+      return;
+    }
+    setIsCreatingCat(true);
+    try {
+      await createCategory({
+        name: catName,
+        slug: catSlug,
+        pillar: catPillar,
+        description: catDesc,
+      });
+      showNotification('success', `Category '${catName}' added successfully!`);
+      setCatName('');
+      setCatSlug('');
+      setCatDesc('');
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+    } catch (err: any) {
+      showNotification('error', err.detail || 'Failed to create category.');
+    } finally {
+      setIsCreatingCat(false);
+    }
+  };
+
+  const handleCreateTag = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tagName || !tagSlug) {
+      showNotification('error', 'Please complete all fields for the tag.');
+      return;
+    }
+    setIsCreatingTag(true);
+    try {
+      await createTag({ name: tagName, slug: tagSlug });
+      showNotification('success', `Tag #${tagName} created successfully!`);
+      setTagName('');
+      setTagSlug('');
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    } catch (err: any) {
+      showNotification('error', err.detail || 'Failed to create tag.');
+    } finally {
+      setIsCreatingTag(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-200">
+      
+      {/* Page Header */}
+      <div className="border-b border-stone-200 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-2xl sm:text-3xl font-black text-stone-900 tracking-tight flex items-center gap-2 leading-tight">
+            <ShieldCheck className="w-8 h-8 text-emerald-800 shrink-0" />
+            Curator Admin Center
+          </h1>
+          <p className="text-sm text-stone-500 mt-1">
+            Build draft digests, approve queues, configure taxonomy nodes, and list catalog resources.
+          </p>
+        </div>
+
+        {/* Global Notifications Alert Banner */}
+        {notify && (
+          <div
+            className={`w-full sm:w-auto self-start sm:self-center text-xs font-bold px-4 py-2.5 rounded-lg shadow-sm border ${
+              notify.type === 'success'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-red-50 text-red-800 border-red-200'
+            }`}
+          >
+            {notify.message}
+          </div>
+        )}
+      </div>
+
+      {/* Tabs navigation panel */}
+      <div className="flex border border-stone-200 bg-white rounded-xl p-1 gap-1 overflow-x-auto shadow-sm" role="tablist" aria-label="Admin sections">
+        <button
+          onClick={() => setActiveTab('queue')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'queue'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-queue"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'queue'}
+        >
+          AI Queue ({drafts?.length || 0})
+        </button>
+        <button
+          onClick={() => setActiveTab('article')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'article'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-briefing"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'article'}
+        >
+          Compose Briefing
+        </button>
+        <button
+          onClick={() => setActiveTab('tool')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'tool'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-tool"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'tool'}
+        >
+          Spotlight Tool
+        </button>
+        <button
+          onClick={() => setActiveTab('earn-story')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'earn-story'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-earn-story"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'earn-story'}
+        >
+          Make Money Stories
+        </button>
+                <button
+          onClick={() => setActiveTab('benchmarks')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'benchmarks'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-benchmarks"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'benchmarks'}
+        >
+          Benchmarks
+        </button>
+        <button
+          onClick={() => setActiveTab('premium')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'premium'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-premium"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'premium'}
+        >
+          Premium
+        </button>
+        <button
+          onClick={() => setActiveTab('taxonomy')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'taxonomy'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-taxonomy"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'taxonomy'}
+        >
+          Taxonomy Node
+        </button>
+        <button
+          onClick={() => setActiveTab('tutorial')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'tutorial'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-tutorial"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'tutorial'}
+        >
+          Tutorials ({tutorialDrafts?.length || 0})
+        </button>
+        <button
+          onClick={() => setActiveTab('video')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'video'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-video"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'video'}
+        >
+          Videos ({videoDrafts?.length || 0})
+        </button>
+        <button
+          onClick={() => setActiveTab('course')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'course'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-course"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'course'}
+        >
+          Courses ({courseDrafts?.length || 0})
+        </button>
+        <button
+          onClick={() => setActiveTab('ai-settings')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'ai-settings'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-ai-settings"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'ai-settings'}
+        >
+          AI Settings
+        </button>
+        <button
+          onClick={() => setActiveTab('ingestion')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg whitespace-nowrap transition-colors ${
+            activeTab === 'ingestion'
+              ? 'bg-stone-900 text-white shadow-sm'
+              : 'text-stone-500 hover:text-stone-950 hover:bg-stone-50'
+          }`}
+          id="admin-tab-ingestion"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'ingestion'}
+        >
+          Ingestion Logs
+        </button>
+      </div>
+
+      {/* TAB 1: AI QUEUE / DRAFT LISTINGS */}
+      {activeTab === 'queue' && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-stone-400">
+              <Layers className="w-4 h-4" />
+              Unpublished Draft Digest Review Queue
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => ingestMutation.mutate()}
+                disabled={ingestMutation.isPending}
+                className="flex items-center gap-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-70 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+              >
+                {ingestMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                {ingestMutation.isPending ? 'Fetching...' : 'Fetch new articles now'}
+              </button>
+              <button
+                onClick={() => sendNewsletterMutation.mutate()}
+                disabled={sendNewsletterMutation.isPending}
+                className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-70 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+              >
+                {sendNewsletterMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Mail className="w-3.5 h-3.5" />
+                )}
+                {sendNewsletterMutation.isPending ? 'Sending...' : 'Send newsletter now'}
+              </button>
+            </div>
+          </div>
+
+          {isDraftsLoading ? (
+            <div className="flex flex-col items-center py-12 gap-3 text-stone-400">
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <p className="text-xs">Loading queue items...</p>
+            </div>
+          ) : !drafts || drafts.length === 0 ? (
+            <div className="bg-white border border-stone-200 rounded-2xl p-6 sm:p-8 text-center max-w-md mx-auto space-y-3 shadow-sm">
+              <CheckSquare className="w-12 h-12 text-emerald-500 mx-auto" />
+              <h3 className="font-serif text-lg font-bold text-stone-800">Curation Queue is clear!</h3>
+              <p className="text-sm text-stone-500">
+                All created briefing digests are fully published. Select the <strong className="font-bold">Compose Briefing</strong> tab above to create a new one.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {drafts.map((draft) => (
+                <div
+                  key={draft.id}
+                  className="bg-white border border-stone-200 rounded-xl p-4 sm:p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-stone-300 transition-colors"
+                >
+                  <div className="space-y-1.5 max-w-2xl">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        Draft Queue
+                      </span>
+                      <span className="text-xs font-semibold text-stone-500">
+                        {PILLARS.find((p) => p.value === draft.pillar)?.label || draft.pillar}
+                      </span>
+                    </div>
+                    <h3 className="font-serif text-lg font-bold text-stone-900">{draft.title}</h3>
+                    <p className="text-xs text-stone-600 line-clamp-2">{draft.summary}</p>
+                    {draft.sourceName && (
+                      <p className="text-[10px] text-stone-400 font-medium">Source: {draft.sourceName}</p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start md:self-center w-full md:w-auto">
+                    <button
+                      onClick={() => publishMutation.mutate(draft.id)}
+                      disabled={publishMutation.isPending}
+                      className="w-full md:w-auto bg-emerald-700 hover:bg-emerald-800 disabled:opacity-75 text-white text-xs font-bold py-2.5 px-4 rounded-lg shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+                      type="button"
+                    >
+                      Approve & Publish
+                    </button>
+                    <button
+                      onClick={() => handleDeleteArticle(draft.id, draft.title)}
+                      disabled={deleteArticleMutation.isPending}
+                      className="bg-white hover:bg-red-50 disabled:opacity-60 text-red-600 border border-red-200 p-2.5 rounded-lg shadow-sm cursor-pointer transition-colors"
+                      type="button"
+                      title="Delete draft"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* TAB 2: COMPOSE BRIEFING FORM */}
+      {activeTab === 'article' && (
+        <section className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-6">
+          <div className="border-b border-stone-100 pb-3">
+            <h2 className="font-serif text-xl font-bold text-stone-800 flex items-center gap-1.5">
+              <Clipboard className="w-5 h-5 text-emerald-800" />
+              Draft New Digest
+            </h2>
+          </div>
+
+          <form onSubmit={handleCreateArticle} className="space-y-5">
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              
+              {/* Pillar Selector */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Pillar Category *</label>
+                <select
+                  value={artPillar}
+                  onChange={(e) => setArtPillar(e.target.value as ArticlePillar)}
+                  className={fieldClass}
+                  required
+                >
+                  {PILLARS.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Category Selector */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Category Entity *</label>
+                <select
+                  value={artCategoryId}
+                  onChange={(e) => setArtCategoryId(e.target.value)}
+                  className={fieldClass}
+                  required
+                >
+                  <option value="">Select Category Node</option>
+                  {categories?.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Source Type */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Curation Type *</label>
+                <select
+                  value={artSourceType}
+                  onChange={(e) => setArtSourceType(e.target.value as any)}
+                  className={fieldClass}
+                  required
+                >
+                  <option value="Original">Original Briefing</option>
+                  <option value="Aggregated">Aggregated Summary</option>
+                  <option value="AIGenerated">AI Generated Draft</option>
+                </select>
+              </div>
+
+            </div>
+
+            {/* Title */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-600 block">Briefing Title *</label>
+              <input
+                type="text"
+                placeholder="e.g. GPT-6 architecture breakthroughs and multi-modal speeds"
+                value={artTitle}
+                onChange={(e) => setArtTitle(e.target.value)}
+                className={fieldClass}
+                required
+              />
+            </div>
+
+            {/* Summary */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-600 block">Sub-Summary / Deck Description *</label>
+              <textarea
+                placeholder="A concise, 1-2 sentence description summarizing the core insights. Shown on preview cards."
+                value={artSummary}
+                onChange={(e) => setArtSummary(e.target.value)}
+                className={`${fieldClass} h-20`}
+                required
+              />
+            </div>
+
+            {/* Body (Markdown content) */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-600 block">Detailed Content body (supports Markdown) *</label>
+              <p className="text-[10px] text-stone-400">Use standard headings (##), bullet points (-), or blockquotes (&gt;) for pristine desktop rendering.</p>
+              <textarea
+                placeholder="# Detailed Briefing Header&#10;&#10;Explain the technology concept deeply..."
+                value={artBody}
+                onChange={(e) => setArtBody(e.target.value)}
+                className="w-full text-sm font-mono p-4 border border-stone-200 rounded-lg h-48 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 bg-stone-50/50"
+                required
+              />
+            </div>
+
+            {/* Tags checkboxes */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-stone-600 block">Taxonomy Tags selection</label>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {tags?.map((t) => {
+                  const isChecked = artSelectedTagIds.includes(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => handleToggleFormTag(t.id)}
+                      className={`text-xs px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
+                        isChecked
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                          : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'
+                      }`}
+                    >
+                      #{t.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Source Details (Optional) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-stone-100 pt-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Original Source Publisher Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. OpenAI Research"
+                  value={artSourceName}
+                  onChange={(e) => setArtSourceName(e.target.value)}
+                  className={fieldClass}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Original Source URL Link</label>
+                <input
+                  type="url"
+                  placeholder="https://openai.com/research/..."
+                  value={artSourceUrl}
+                  onChange={(e) => setArtSourceUrl(e.target.value)}
+                  className="w-full text-sm px-3 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 bg-stone-50/50"
+                />
+              </div>
+            </div>
+
+            {/* Cover Image (used for the article page and link-share previews) */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-600 block">Cover Image URL (optional)</label>
+              <p className="text-[10px] text-stone-400">Shown as the preview image when this article's link is shared anywhere. Recommend 1200×630. Falls back to the site default if left blank.</p>
+              <ImageUploadWidget
+                folder="ArticleCovers"
+                currentUrl={artCoverImageUrl || null}
+                onUploaded={(url) => setArtCoverImageUrl(url)}
+              />
+              <p className="text-[10px] text-stone-400">Or paste a URL directly:</p>
+              <input
+                type="url"
+                placeholder="https://images.example.com/gpt-6-cover.jpg"
+                value={artCoverImageUrl}
+                onChange={(e) => setArtCoverImageUrl(e.target.value)}
+                className="w-full text-sm px-3 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 bg-stone-50/50"
+              />
+            </div>
+
+            {/* Submit btn */}
+            <div className="flex justify-end pt-4 border-t border-stone-100">
+              <button
+                type="submit"
+                disabled={isCreatingArticle}
+                className={`${primaryButtonClass} w-full sm:w-auto`}
+                id="create-article-submit-btn"
+              >
+                {isCreatingArticle ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Saving draft queue...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>Create & Queue Draft</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+          </form>
+        </section>
+      )}
+
+      {/* TAB 3: COMPOSE AI SPOTLIGHT TOOL */}
+      {activeTab === 'tool' && (
+        <section className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-6 max-w-2xl">
+          <div className="border-b border-stone-100 pb-3">
+            <h2 className="font-serif text-xl font-bold text-stone-800 flex items-center gap-1.5">
+              <Radio className="w-5 h-5 text-emerald-800" />
+              Spotlight New AI Tool
+            </h2>
+          </div>
+
+          <form onSubmit={handleCreateTool} className="space-y-4">
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Tool Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. ChatGPT Pro"
+                  value={toolName}
+                  onChange={(e) => setToolName(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">URL Slug *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. chatgpt-pro"
+                  value={toolSlug}
+                  onChange={(e) => setToolSlug(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-600 block">Tool Description *</label>
+              <textarea
+                placeholder="Briefly state key functionalities, developer, and main benefits..."
+                value={toolDesc}
+                onChange={(e) => setToolDesc(e.target.value)}
+                className={`${fieldClass} h-24`}
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Website URL Link *</label>
+                <input
+                  type="url"
+                  placeholder="https://chatgpt.com"
+                  value={toolUrl}
+                  onChange={(e) => setToolUrl(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Pricing details *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Free / $20mo"
+                  value={toolPricing}
+                  onChange={(e) => setToolPricing(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-600 block">Comma separated tag words *</label>
+              <input
+                type="text"
+                placeholder="e.g. coding,writing,productivity"
+                value={toolTags}
+                onChange={(e) => setToolTags(e.target.value)}
+                className={fieldClass}
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-stone-600 block">Logo (optional)</label>
+              <ImageUploadWidget folder="AiToolLogos" currentUrl={toolLogoUrl} onUploaded={(url) => setToolLogoUrl(url || null)} />
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-stone-100">
+              <button
+                type="submit"
+                disabled={isCreatingTool}
+                className={`${primaryButtonClass} w-full sm:w-auto`}
+                id="create-tool-submit-btn"
+              >
+                {isCreatingTool ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Spotlighting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>Spotlight Tool</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+          </form>
+        </section>
+      )}
+
+      {activeTab === 'tool' && (
+        <div className="max-w-2xl mt-8">
+          <AiToolDiscoveryPanel onNotify={showNotification} />
+        </div>
+      )}
+
+      {activeTab === 'earn-story' && (
+        <div className="max-w-3xl mt-8">
+          <EarnStoryDiscoveryPanel onNotify={showNotification} />
+        </div>
+      )}
+
+      {activeTab === 'premium' && (
+        <div className="max-w-3xl mt-8">
+          <PremiumSubscribersPanel />
+        </div>
+      )}
+
+      {/* TAB 4: COMPOSE TAXONOMY (CATEGORY & TAG FORM) */}
+      {activeTab === 'taxonomy' && (
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
+          
+          {/* New Category Box */}
+          <div className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5">
+            <h2 className="font-serif text-lg font-bold text-stone-800 border-b border-stone-100 pb-2">
+              Create Category Node
+            </h2>
+
+            <form onSubmit={handleCreateCategory} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Category Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Cognitive Models"
+                  value={catName}
+                  onChange={(e) => setCatName(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">URL Slug *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. cognitive-models"
+                  value={catSlug}
+                  onChange={(e) => setCatSlug(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Primary Content Pillar *</label>
+                <select
+                  value={catPillar}
+                  onChange={(e) => setCatPillar(e.target.value as ArticlePillar)}
+                  className={fieldClass}
+                  required
+                >
+                  {PILLARS.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Category Description *</label>
+                <textarea
+                  placeholder="Provide a 1-sentence synopsis of what topics sit in this node..."
+                  value={catDesc}
+                  onChange={(e) => setCatDesc(e.target.value)}
+                  className={`${fieldClass} h-20`}
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isCreatingCat}
+                className={`${primaryButtonClass} w-full`}
+                id="create-category-submit-btn"
+              >
+                {isCreatingCat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                <span>Add Category Node</span>
+              </button>
+            </form>
+          </div>
+
+          {/* New Tag Box */}
+          <div className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5 h-fit">
+            <h2 className="font-serif text-lg font-bold text-stone-800 border-b border-stone-100 pb-2">
+              Create Taxonomy Tag
+            </h2>
+
+            <form onSubmit={handleCreateTag} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Tag Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. LLM Reasoning"
+                  value={tagName}
+                  onChange={(e) => setTagName(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">URL Slug *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. llm-reasoning"
+                  value={tagSlug}
+                  onChange={(e) => setTagSlug(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isCreatingTag}
+                className={`${primaryButtonClass} w-full`}
+                id="create-tag-submit-btn"
+              >
+                {isCreatingTag ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                <span>Add Taxonomy Tag</span>
+              </button>
+            </form>
+          </div>
+
+        </section>
+      )}
+
+      {/* TAB 5: TUTORIALS — compose + review queue combined */}
+      {activeTab === 'tutorial' && (
+        <section className="space-y-8">
+
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 shadow-sm space-y-6">
+            <div className="border-b border-stone-100 pb-3">
+              <h2 className="font-serif text-xl font-bold text-stone-800 flex items-center gap-1.5">
+                <GraduationCap className="w-5 h-5 text-emerald-800" />
+                Write a Tutorial
+              </h2>
+              <p className="text-xs text-stone-500 mt-1">A "how to use X" guide — for whatever AI tool just came out.</p>
+            </div>
+
+            <form onSubmit={handleCreateTutorial} className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-stone-600 block">Tool Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. ChatGPT-5, Claude Opus 4.8"
+                    value={tutToolName}
+                    onChange={(e) => setTutToolName(e.target.value)}
+                    className={fieldClass}
+                    required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-stone-600 block">Difficulty *</label>
+                  <select
+                    value={tutDifficulty}
+                    onChange={(e) => setTutDifficulty(e.target.value as DifficultyLevel)}
+                    className={fieldClass}
+                    required
+                  >
+                    {DIFFICULTIES.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Tutorial Title *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Getting started with ChatGPT-5 for essay outlines"
+                  value={tutTitle}
+                  onChange={(e) => setTutTitle(e.target.value)}
+                  className={fieldClass}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Summary *</label>
+                <textarea
+                  placeholder="A 1-2 sentence description of what this tutorial covers."
+                  value={tutSummary}
+                  onChange={(e) => setTutSummary(e.target.value)}
+                  className={`${fieldClass} h-16`}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Body (supports Markdown) *</label>
+                <textarea
+                  placeholder="# Step 1&#10;&#10;Explain the first step clearly..."
+                  value={tutBody}
+                  onChange={(e) => setTutBody(e.target.value)}
+                  className={`${fieldClass} font-mono h-48`}
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600 block">Cover Image (optional)</label>
+                <ImageUploadWidget
+                  folder="TutorialCovers"
+                  currentUrl={tutCoverImageUrl || null}
+                  onUploaded={(url) => setTutCoverImageUrl(url)}
+                />
+              </div>
+
+              <div className="flex justify-end pt-4 border-t border-stone-100">
+                <button type="submit" disabled={isCreatingTutorial} className={primaryButtonClass}>
+                  {isCreatingTutorial ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-4 h-4" />
+                      <span>Create Tutorial Draft</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-stone-400">
+              <Layers className="w-4 h-4" />
+              Tutorial Review Queue
+            </div>
+
+            {isTutorialDraftsLoading ? (
+              <div className="flex flex-col items-center py-12 gap-3 text-stone-400">
+                <Loader2 className="w-8 h-8 animate-spin" />
+                <p className="text-xs">Loading queue items...</p>
+              </div>
+            ) : !tutorialDrafts || tutorialDrafts.length === 0 ? (
+              <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center max-w-md mx-auto space-y-3">
+                <CheckSquare className="w-12 h-12 text-emerald-500 mx-auto" />
+                <h3 className="font-serif text-lg font-bold text-stone-800">No tutorial drafts waiting</h3>
+                <p className="text-sm text-stone-500">Use the form above to write one.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {tutorialDrafts.map((draft) => (
+                  <div
+                    key={draft.id}
+                    className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-stone-300 transition-colors"
+                  >
+                    <div className="space-y-1.5 max-w-2xl">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                          {draft.difficultyLevel}
+                        </span>
+                        <span className="text-xs font-semibold text-stone-500">{draft.toolName}</span>
+                      </div>
+                      <h3 className="font-serif text-lg font-bold text-stone-900">{draft.title}</h3>
+                      <p className="text-xs text-stone-600 line-clamp-2">{draft.summary}</p>
+                    </div>
+                    <div className="flex items-center gap-2 self-start md:self-center">
+                      <button
+                        onClick={() => publishTutorialMutation.mutate(draft.id)}
+                        disabled={publishTutorialMutation.isPending}
+                        className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-75 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+                      >
+                        Approve & Publish
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTutorial(draft.id, draft.title)}
+                        disabled={deleteTutorialMutation.isPending}
+                        className="bg-white hover:bg-red-50 disabled:opacity-60 text-red-600 border border-red-200 p-2.5 rounded-lg shadow-sm cursor-pointer transition-colors"
+                        title="Delete draft"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+        </section>
+      )}
+
+      {/* TAB 6: VIDEOS — YouTube ingestion + review queue */}
+      {activeTab === 'video' && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-stone-400">
+              <PlayCircle className="w-4 h-4" />
+              Video Review Queue
+            </div>
+            <button
+              onClick={() => videoIngestMutation.mutate()}
+              disabled={videoIngestMutation.isPending}
+              className="flex items-center gap-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-70 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+            >
+              {videoIngestMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              {videoIngestMutation.isPending ? 'Fetching...' : 'Fetch new videos now'}
+            </button>
+          </div>
+          <p className="text-xs text-stone-500 -mt-2">
+            Pulls recent uploads from your configured YouTube channels and writes an AI review for each new one. Add channel IDs in <code className="bg-stone-100 px-1 py-0.5 rounded text-[11px]">YouTube:ChannelIds</code> on the backend first.
+          </p>
+
+          {isVideoDraftsLoading ? (
+            <div className="flex flex-col items-center py-12 gap-3 text-stone-400">
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <p className="text-xs">Loading queue items...</p>
+            </div>
+          ) : !videoDrafts || videoDrafts.length === 0 ? (
+            <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center max-w-md mx-auto space-y-3">
+              <CheckSquare className="w-12 h-12 text-emerald-500 mx-auto" />
+              <h3 className="font-serif text-lg font-bold text-stone-800">No video drafts waiting</h3>
+              <p className="text-sm text-stone-500">Click "Fetch new videos now" to check your configured channels.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {videoDrafts.map((draft) => (
+                <div
+                  key={draft.id}
+                  className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-stone-300 transition-colors"
+                >
+                  <div className="flex items-start gap-4 max-w-2xl">
+                    {draft.thumbnailUrl && (
+                      <img src={draft.thumbnailUrl} alt={draft.title} className="w-24 h-16 object-cover rounded-lg border border-stone-200 shrink-0" />
+                    )}
+                    <div className="space-y-1.5">
+                      <span className="text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        {draft.channelName}
+                      </span>
+                      <h3 className="font-serif text-lg font-bold text-stone-900">{draft.title}</h3>
+                      <p className="text-xs text-stone-600 line-clamp-2">{draft.aiReview}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-start md:self-center">
+                    <button
+                      onClick={() => publishVideoMutation.mutate(draft.id)}
+                      disabled={publishVideoMutation.isPending}
+                      className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-75 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      Approve & Publish
+                    </button>
+                    <button
+                      onClick={() => handleDeleteVideo(draft.id, draft.title)}
+                      disabled={deleteVideoMutation.isPending}
+                      className="bg-white hover:bg-red-50 disabled:opacity-60 text-red-600 border border-red-200 p-2.5 rounded-lg shadow-sm cursor-pointer transition-colors"
+                      title="Delete draft"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* TAB 7: COURSES — category management + topic-driven AI discovery + review queue */}
+      {activeTab === 'course' && (
+        <section className="space-y-8">
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="border-b border-stone-100 pb-3">
+              <h2 className="font-serif text-xl font-bold text-stone-800 flex items-center gap-1.5">
+                <Layers className="w-5 h-5 text-emerald-800" />
+                Course Categories
+              </h2>
+              <p className="text-xs text-stone-500 mt-1">
+                Categories keep the Courses directory organized instead of one flat, random list. Add as many as you need — deleting one only works if no course still uses it.
+              </p>
+            </div>
+
+            <form onSubmit={handleAddCourseCategory} className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                placeholder="e.g. Web Development, Data Science, Game Design"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                className={`${fieldClass} flex-1`}
+              />
+              <button
+                type="submit"
+                disabled={createCourseCategoryMutation.isPending || !newCategoryName.trim()}
+                className={`${primaryButtonClass} whitespace-nowrap`}
+              >
+                {createCourseCategoryMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Plus className="w-3.5 h-3.5" />
+                )}
+                Add Category
+              </button>
+            </form>
+
+            {courseCategories && courseCategories.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {courseCategories.map((cat) => (
+                  <span
+                    key={cat.id}
+                    className="inline-flex items-center gap-2 text-xs font-bold bg-stone-50 border border-stone-200 text-stone-700 pl-3 pr-2 py-1.5 rounded-full"
+                  >
+                    {cat.name}
+                    <button
+                      onClick={() => handleDeleteCourseCategory(cat.id, cat.name)}
+                      disabled={deleteCourseCategoryMutation.isPending}
+                      className="text-stone-400 hover:text-red-600 transition-colors"
+                      title="Delete category"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="border-b border-stone-100 pb-3">
+              <h2 className="font-serif text-xl font-bold text-stone-800 flex items-center gap-1.5">
+                <GraduationCap className="w-5 h-5 text-emerald-800" />
+                Find Courses
+              </h2>
+              <p className="text-xs text-stone-500 mt-1">
+                Type a topic and pick a category — Claude searches the web (YouTube, Coursera, Udemy, freeCodeCamp, and more) for real courses on it, tagging each as free or paid.
+              </p>
+            </div>
+
+            {(!courseCategories || courseCategories.length === 0) ? (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Add a category above before searching for courses.
+              </p>
+            ) : (
+              <form onSubmit={handleDiscoverCourses} className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="e.g. Prompt engineering for beginners"
+                    value={courseTopic}
+                    onChange={(e) => setCourseTopic(e.target.value)}
+                    className={fieldClass}
+                    style={{ paddingLeft: '2.25rem' }}
+                  />
+                  <Search className="w-4 h-4 text-stone-400 absolute left-3 top-3" />
+                </div>
+                <select
+                  value={discoveryCategoryId}
+                  onChange={(e) => setDiscoveryCategoryId(e.target.value)}
+                  className={fieldClass}
+                  style={{ maxWidth: '14rem' }}
+                >
+                  <option value="">Choose category...</option>
+                  {courseCategories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={courseDiscoveryMutation.isPending || !courseTopic.trim() || !discoveryCategoryId}
+                  className={`${primaryButtonClass} whitespace-nowrap`}
+                >
+                  {courseDiscoveryMutation.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Searching...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Search for courses</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-stone-400">
+              <Layers className="w-4 h-4" />
+              Course Review Queue
+            </div>
+
+            {isCourseDraftsLoading ? (
+              <div className="flex flex-col items-center py-12 gap-3 text-stone-400">
+                <Loader2 className="w-8 h-8 animate-spin" />
+                <p className="text-xs">Loading queue items...</p>
+              </div>
+            ) : !courseDrafts || courseDrafts.length === 0 ? (
+              <div className="bg-white border border-stone-200 rounded-2xl p-12 text-center max-w-md mx-auto space-y-3">
+                <CheckSquare className="w-12 h-12 text-emerald-500 mx-auto" />
+                <h3 className="font-serif text-lg font-bold text-stone-800">No course drafts waiting</h3>
+                <p className="text-sm text-stone-500">Search for a topic above to find some.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {courseDrafts.map((draft) => (
+                  <div
+                    key={draft.id}
+                    className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-stone-300 transition-colors"
+                  >
+                    <div className="flex items-start gap-4 max-w-2xl">
+                      {draft.thumbnailUrl && (
+                        <img src={draft.thumbnailUrl} alt={draft.title} className="w-24 h-16 object-cover rounded-lg border border-stone-200 shrink-0" />
+                      )}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {draft.courseCategoryName}
+                          </span>
+                          <span className="text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                            {draft.provider}
+                          </span>
+                          <span
+                            className={`text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded border ${
+                              draft.pricingType === 'Free'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-orange-50 text-orange-700 border-orange-200'
+                            }`}
+                          >
+                            {draft.pricingType === 'Free' ? 'Free' : draft.price || 'Paid'}
+                          </span>
+                        </div>
+                        <h3 className="font-serif text-lg font-bold text-stone-900">{draft.title}</h3>
+                        <p className="text-xs text-stone-600 line-clamp-2">{draft.description}</p>
+                        <a
+                          href={draft.externalUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-emerald-700 underline break-all"
+                        >
+                          {draft.externalUrl}
+                        </a>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 self-start md:self-center">
+                      <button
+                        onClick={() => publishCourseMutation.mutate(draft.id)}
+                        disabled={publishCourseMutation.isPending}
+                        className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-75 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-sm cursor-pointer transition-colors whitespace-nowrap"
+                      >
+                        Approve & Publish
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCourse(draft.id, draft.title)}
+                        disabled={deleteCourseMutation.isPending}
+                        className="bg-white hover:bg-red-50 disabled:opacity-60 text-red-600 border border-red-200 p-2.5 rounded-lg shadow-sm cursor-pointer transition-colors"
+                        title="Delete draft"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* TAB 9: INGESTION LOGS — what each news-collector run did and why */}
+      {activeTab === 'ingestion' && (
+        <IngestionLogsPanel focusRunId={focusRunId} onFocusHandled={clearFocusRun} />
+      )}
+
+      {/* TAB 8: AI SETTINGS — per-task provider/model switching + editable article template */}
+      {activeTab === 'ai-settings' && (
+        <section className="space-y-8 max-w-3xl">
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 shadow-sm space-y-5">
+            <div className="border-b border-stone-100 pb-3">
+              <h2 className="font-serif text-xl font-bold text-stone-800 flex items-center gap-1.5">
+                <Cpu className="w-5 h-5 text-emerald-800" />
+                AI Provider per Task
+              </h2>
+              <p className="text-xs text-stone-500 mt-1">
+                Each task is switched independently — e.g. Article Writing can run on Claude while Video Review runs on Gemini, at the same time.
+              </p>
+            </div>
+
+            {(aiTaskConfigs ?? []).map((config) => (
+              <AiTaskConfigRow
+                key={config.task}
+                config={config}
+                onSave={(provider, model) => setTaskConfigMutation.mutate({ task: config.task, provider, model })}
+                isSaving={setTaskConfigMutation.isPending}
+                fieldClass={fieldClass}
+              />
+            ))}
+          </div>
+
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="border-b border-stone-100 pb-3">
+              <h2 className="font-serif text-xl font-bold text-stone-800 flex items-center gap-1.5">
+                <Clipboard className="w-5 h-5 text-emerald-800" />
+                Article Writing Template
+              </h2>
+              <p className="text-xs text-stone-500 mt-1">
+                This is the editorial voice/instructions given to whichever model writes articles. The output format itself (title, summary, body, category, tags) stays fixed — only this direction is editable.
+              </p>
+            </div>
+
+            {articleTemplate && (
+              <>
+                <textarea
+                  value={templateDraft ?? articleTemplate.promptTemplate}
+                  onChange={(e) => setTemplateDraft(e.target.value)}
+                  className={`${fieldClass} font-mono h-48`}
+                />
+                {articleTemplate.isDefault && templateDraft === null && (
+                  <p className="text-[10px] text-stone-400">Showing the built-in default — nothing custom saved yet.</p>
+                )}
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSaveTemplate}
+                    disabled={updateTemplateMutation.isPending || templateDraft === null}
+                    className={primaryButtonClass}
+                  >
+                    {updateTemplateMutation.isPending ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sliders className="w-3.5 h-3.5" />
+                    )}
+                    Save Template
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
+      {/* TAB 9: Benchmarks */}
+      {activeTab === 'benchmarks' && (
+        <div className="max-w-4xl mt-8">
+          <BenchmarksAdminPanel onNotify={showNotification} />
+        </div>
+      )}
+
+    </div>
+  );
+};
+
+const PROVIDERS: { value: AiProvider; label: string; modelHint: string }[] = [
+  { value: 'Anthropic', label: 'Claude (Anthropic)', modelHint: 'e.g. claude-sonnet-4-5' },
+  { value: 'Gemini', label: 'Gemini (Google)', modelHint: 'e.g. gemini-2.0-flash' },
+  { value: 'OpenAI', label: 'ChatGPT (OpenAI)', modelHint: 'e.g. gpt-4o' },
+  { value: 'Kimi', label: 'Kimi (Moonshot)', modelHint: 'e.g. kimi-k2-0711-preview' },
+];
+
+const TASK_LABELS: Record<AiTask, string> = {
+  ArticleWriting: 'Article Writing',
+  VideoReview: 'Video Review',
+};
+
+const AiTaskConfigRow: React.FC<{
+  config: { task: AiTask; provider: AiProvider; model: string | null; isDefault: boolean };
+  onSave: (provider: AiProvider, model: string) => void;
+  isSaving: boolean;
+  fieldClass: string;
+}> = ({ config, onSave, isSaving, fieldClass }) => {
+  const [provider, setProvider] = useState<AiProvider>(config.provider);
+  const [model, setModel] = useState(config.model ?? '');
+
+  const providerInfo = PROVIDERS.find((p) => p.value === provider);
+  const hasChanges = provider !== config.provider || model !== (config.model ?? '');
+
+  return (
+    <div className="border border-stone-100 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-stone-800">{TASK_LABELS[config.task]}</h3>
+        {config.isDefault && (
+          <span className="text-[9px] font-bold uppercase tracking-wider text-stone-400 bg-stone-50 border border-stone-200 px-2 py-0.5 rounded">
+            Using default
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <select
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as AiProvider)}
+          className={fieldClass}
+        >
+          {PROVIDERS.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder={providerInfo?.modelHint}
+          className={fieldClass}
+        />
+      </div>
+      <div className="flex justify-end">
+        <button
+          onClick={() => onSave(provider, model)}
+          disabled={isSaving || !model.trim() || !hasChanges}
+          className="bg-stone-900 hover:bg-stone-800 disabled:opacity-60 text-white text-xs font-bold py-2 px-4 rounded-lg cursor-pointer transition-colors"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+};

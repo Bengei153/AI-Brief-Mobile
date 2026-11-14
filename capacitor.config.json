@@ -1,0 +1,20 @@
+{
+  "appId": "com.aibrief.app",
+  "appName": "AI Brief",
+  "webDir": "dist",
+  "android": {
+    "backgroundColor": "#faf9f6"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "SplashScreen": {
+      "launchShowDuration": 900,
+      "launchAutoHide": true,
+      "backgroundColor": "#faf9f6",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP"
+    }
+  }
+}

@@ -1,0 +1,100 @@
+/* AI Brief mobile shell. Everything here is scoped to the installed app (.native-app). */
+html:not(.native-app) .native-only { display: none !important; }
+:root { --na-accent: #047857; --na-accent-ink: #ffffff; --na-accent-soft: rgba(4,120,87,.12); --na-card: var(--surface-card, #ffffff); --na-line: var(--line-soft, rgba(28,25,23,.1)); --na-ink: var(--ink-strong, var(--app-text)); --na-muted: rgba(87,83,78,1); --na-warn: #b45309; }
+:root[data-theme='dark'] { --na-accent: #34d399; --na-accent-ink: #04261a; --na-accent-soft: rgba(52,211,153,.16); --na-card: var(--surface-card, #1c1a18); --na-line: var(--line-soft, rgba(245,245,244,.12)); --na-muted: rgba(214,211,209,1); --na-warn: #fbbf24; }
+
+.native-app, .native-app body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+.native-app body { -webkit-touch-callout: none; }
+.native-app .site-topbar, .native-app .site-footer, .native-app .skip-link { display: none !important; }
+.native-app .site-header { position: sticky; top: 0; z-index: 40; padding-top: env(safe-area-inset-top); background: color-mix(in srgb, var(--app-page) 88%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); border-bottom: 1px solid var(--na-line); }
+.native-app .editorial-main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+.native-app .editorial-main > * { animation: na-rise 240ms cubic-bezier(.2,.7,.2,1) both; }
+.native-app .icon-button, .native-app .theme-toggle { min-width: 48px; min-height: 48px; }
+.native-app a, .native-app button { touch-action: manipulation; }
+.na-page :focus-visible, .na-prompt :focus-visible, .native-app .mobile-bottom-nav :focus-visible { outline: 3px solid var(--na-accent); outline-offset: 2px; }
+
+/* Bottom navigation: thumb-zone, labelled, 56dp targets, clear current-location pill */
+.native-app .mobile-bottom-nav { background: color-mix(in srgb, var(--na-card) 97%, transparent); -webkit-backdrop-filter: blur(20px) saturate(1.5); backdrop-filter: blur(20px) saturate(1.5); border-top: 1px solid var(--na-line); padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 28px rgba(20,30,25,.07); }
+.native-app .mobile-bottom-nav > a, .native-app .mobile-bottom-nav > button { position: relative; isolation: isolate; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 0; background: none; color: var(--na-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .01em; border-radius: 16px; transition: color 160ms ease, transform 120ms ease; }
+.native-app .mobile-bottom-nav > *:active { transform: scale(.94); }
+.native-app .mobile-bottom-nav > a.is-active { color: var(--na-accent); font-weight: 700; }
+.native-app .mobile-bottom-nav > a::before { content: ''; position: absolute; z-index: -1; top: 5px; left: 50%; width: 58px; height: 30px; margin-left: -29px; border-radius: 999px; background: var(--na-accent-soft); opacity: 0; transform: scaleX(.6); transition: opacity 180ms ease, transform 220ms cubic-bezier(.2,.8,.2,1); }
+.native-app .mobile-bottom-nav > a.is-active::before { opacity: 1; transform: none; }
+
+/* Pull to refresh */
+.na-ptr { position: fixed; top: calc(env(safe-area-inset-top) + 70px); left: 50%; z-index: 60; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; background: var(--na-card); color: var(--na-accent); border: 1px solid var(--na-line); box-shadow: 0 8px 24px rgba(0,0,0,.16); transition: opacity 160ms ease; pointer-events: none; }
+.na-ptr.is-refreshing svg { animation: na-spin 800ms linear infinite; }
+.na-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* Buttons */
+.na-btn { min-height: 48px; padding: 0 20px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 14px; border: 1px solid transparent; font-size: 15px; font-weight: 700; cursor: pointer; transition: transform 120ms ease, background-color 160ms ease; }
+.na-btn:active { transform: scale(.97); }
+.na-btn--primary { background: var(--na-accent); color: var(--na-accent-ink); box-shadow: 0 6px 16px var(--na-accent-soft); }
+.na-btn--outline { background: transparent; color: var(--na-ink); border-color: var(--na-line); }
+.na-btn--ghost { background: transparent; color: var(--na-muted); }
+.na-btn--small { min-height: 48px; padding: 0 14px; font-size: 14px; background: var(--na-card); color: var(--na-ink); border-color: var(--na-line); white-space: nowrap; }
+
+/* Alert opt-in sheet */
+.na-prompt { position: fixed; left: 12px; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 50; display: flex; gap: 14px; padding: 20px 18px 16px; border-radius: 24px; background: var(--na-card); color: var(--na-ink); border: 1px solid var(--na-line); box-shadow: 0 24px 60px rgba(15,25,20,.28); animation: na-sheet 360ms cubic-bezier(.2,.8,.2,1) both; }
+.na-prompt__icon { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px; background: var(--na-accent-soft); color: var(--na-accent); }
+.na-prompt h2 { margin: 0 40px 6px 0; font-size: 20px; line-height: 1.2; }
+.na-prompt p { margin: 0; font-size: 14.5px; line-height: 1.5; color: var(--na-muted); }
+.na-prompt__actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 14px; }
+.na-prompt__actions .na-btn { padding: 0 16px; }
+.na-prompt__close { position: absolute; top: 6px; right: 6px; width: 48px; height: 48px; display: grid; place-items: center; border: 0; background: none; color: var(--na-muted); border-radius: 50%; }
+
+/* Alerts screen */
+.na-page { max-width: 640px; margin: 0 auto; padding: 20px 16px 8px; color: var(--na-ink); }
+.na-page__head h1 { margin: 10px 0 8px; font-size: 30px; line-height: 1.12; letter-spacing: -.01em; }
+.na-page__head p { margin: 0 0 18px; font-size: 15.5px; line-height: 1.55; color: var(--na-muted); }
+.na-eyebrow { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--na-accent-soft); color: var(--na-accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.na-section-title { margin: 24px 4px 10px; font-size: 12.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--na-muted); }
+.na-card { background: var(--na-card); border: 1px solid var(--na-line); border-radius: 20px; box-shadow: 0 1px 2px rgba(20,30,25,.04), 0 10px 30px rgba(20,30,25,.05); overflow: hidden; transition: opacity 200ms ease; }
+.na-card.is-muted { opacity: .55; }
+.na-row { display: flex; align-items: center; gap: 14px; min-height: 72px; padding: 10px 8px 10px 16px; }
+.na-row + .na-row { border-top: 1px solid var(--na-line); }
+.na-row__icon { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: color-mix(in srgb, var(--na-ink) 7%, transparent); color: var(--na-ink); }
+.na-row__icon--accent { background: var(--na-accent); color: var(--na-accent-ink); }
+.na-row__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.na-row__text strong { font-size: 16px; font-weight: 700; }
+.na-row__text small { font-size: 13.5px; line-height: 1.35; color: var(--na-muted); }
+.na-switch { flex: none; width: 68px; height: 52px; display: grid; place-items: center; border: 0; background: none; padding: 0; border-radius: 16px; cursor: pointer; }
+.na-switch__track { width: 52px; height: 32px; border-radius: 999px; background: color-mix(in srgb, var(--na-ink) 22%, transparent); position: relative; transition: background-color 200ms ease; }
+.na-switch__thumb { position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.28); transition: transform 220ms cubic-bezier(.2,.8,.2,1); }
+.na-switch.is-on .na-switch__track { background: var(--na-accent); }
+.na-switch.is-on .na-switch__thumb { transform: translateX(20px); }
+.na-switch:disabled { cursor: not-allowed; }
+.na-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.na-actions .na-btn { flex: 1 1 150px; }
+.na-banner { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; margin-bottom: 14px; border-radius: 18px; background: var(--na-accent-soft); color: var(--na-ink); }
+.na-banner > svg { flex: none; margin-top: 2px; color: var(--na-accent); }
+.na-banner > div { flex: 1; }
+.na-banner strong { font-size: 15px; }
+.na-banner p { margin: 2px 0 0; font-size: 14px; line-height: 1.45; color: var(--na-muted); }
+.na-banner--warn { background: color-mix(in srgb, var(--na-warn) 14%, transparent); }
+.na-banner--warn > svg { color: var(--na-warn); }
+.na-status { margin-top: 16px; padding: 4px 16px; }
+.na-status > div { display: flex; align-items: center; gap: 10px; min-height: 48px; font-size: 14.5px; }
+.na-status > div + div { border-top: 1px solid var(--na-line); }
+.na-status svg { flex: none; color: var(--na-accent); }
+.na-status span { color: var(--na-muted); }
+.na-status strong { margin-left: auto; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+.na-form { padding: 16px; }
+.na-form label { display: block; margin-bottom: 8px; font-size: 14.5px; font-weight: 700; }
+.na-form input { width: 100%; min-height: 52px; padding: 0 14px; border-radius: 14px; border: 1.5px solid var(--na-line); background: var(--app-page); color: var(--na-ink); font-size: 16px; }
+.na-form input:focus { outline: none; border-color: var(--na-accent); box-shadow: 0 0 0 4px var(--na-accent-soft); }
+.na-form input[aria-invalid='true'] { border-color: #dc2626; }
+.na-form p { margin: 8px 2px 0; font-size: 13.5px; line-height: 1.45; color: var(--na-muted); }
+.na-form p.is-error { color: #dc2626; font-weight: 600; }
+.na-toast { position: fixed; left: 16px; right: 16px; bottom: calc(88px + env(safe-area-inset-bottom)); z-index: 70; display: flex; justify-content: center; pointer-events: none; }
+.na-toast span { max-width: 520px; padding: 13px 18px; border-radius: 14px; background: #1c1917; color: #fafaf9; font-size: 14.5px; font-weight: 600; box-shadow: 0 14px 34px rgba(0,0,0,.3); animation: na-sheet 260ms cubic-bezier(.2,.8,.2,1) both; }
+:root[data-theme='dark'] .na-toast span { background: #f5f5f4; color: #1c1917; }
+
+@keyframes na-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes na-sheet { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@keyframes na-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .native-app *, .na-prompt, .na-toast span { animation: none !important; transition: none !important; } }
+
+/* Pull-quote style summaries: accent bar on the left only, and stacked full-width actions on narrow phones */
+.native-app .border-l-4:not(.border) { border-style: solid; border-width: 0 0 0 4px; }
+.na-actions .na-btn { flex: 1 1 190px; white-space: nowrap; }

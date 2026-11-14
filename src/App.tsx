@@ -1,0 +1,215 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { lazy, Suspense, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider } from './store/authStore';
+import { Layout } from './components/Layout';
+import { ProtectedRoute, AdminRoute } from './components/ProtectedRoute';
+import { NativeShell } from './components/NativeShell';
+
+const HomePage = lazy(() => import('./pages/HomePage').then((module) => ({ default: module.HomePage })));
+const ArticlesPage = lazy(() => import('./pages/ArticlesPage').then((module) => ({ default: module.ArticlesPage })));
+const ArticleDetailPage = lazy(() =>
+  import('./pages/ArticleDetailPage').then((module) => ({ default: module.ArticleDetailPage }))
+);
+const ToolsPage = lazy(() => import('./pages/ToolsPage').then((module) => ({ default: module.ToolsPage })));
+const TutorialsPage = lazy(() => import('./pages/TutorialsPage').then((module) => ({ default: module.TutorialsPage })));
+const TutorialDetailPage = lazy(() =>
+  import('./pages/TutorialDetailPage').then((module) => ({ default: module.TutorialDetailPage }))
+);
+const VideosPage = lazy(() => import('./pages/VideosPage').then((module) => ({ default: module.VideosPage })));
+const CoursesPage = lazy(() => import('./pages/CoursesPage').then((module) => ({ default: module.CoursesPage })));
+const VideoDetailPage = lazy(() =>
+  import('./pages/VideoDetailPage').then((module) => ({ default: module.VideoDetailPage }))
+);
+const ShowcasePage = lazy(() => import('./pages/ShowcasePage').then((module) => ({ default: module.ShowcasePage })));
+const ShowcasePostDetailPage = lazy(() =>
+  import('./pages/ShowcasePostDetailPage').then((module) => ({ default: module.ShowcasePostDetailPage }))
+);
+const ShowcaseNewPostPage = lazy(() =>
+  import('./pages/ShowcaseNewPostPage').then((module) => ({ default: module.ShowcaseNewPostPage }))
+);
+const LoginPage = lazy(() => import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })));
+const RegisterPage = lazy(() => import('./pages/RegisterPage').then((module) => ({ default: module.RegisterPage })));
+const OnboardingPage = lazy(() =>
+  import('./pages/OnboardingPage').then((module) => ({ default: module.OnboardingPage }))
+);
+const ProfilePage = lazy(() => import('./pages/ProfilePage').then((module) => ({ default: module.ProfilePage })));
+const BookmarksPage = lazy(() =>
+  import('./pages/BookmarksPage').then((module) => ({ default: module.BookmarksPage }))
+);
+const MakeMoneyPage = lazy(() =>
+  import('./pages/MakeMoneyPage').then((module) => ({ default: module.MakeMoneyPage }))
+);
+const EarnStoryDetailPage = lazy(() =>
+  import('./pages/EarnStoryDetailPage').then((module) => ({ default: module.EarnStoryDetailPage }))
+);
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then((module) => ({ default: module.ProjectsPage })));
+const ProjectDetailPage = lazy(() =>
+  import('./pages/ProjectDetailPage').then((module) => ({ default: module.ProjectDetailPage }))
+);
+const PremiumPage = lazy(() => import('./pages/PremiumPage').then((module) => ({ default: module.PremiumPage })));
+const CreatePage = lazy(() => import('./pages/CreatePage').then((module) => ({ default: module.CreatePage })));
+const MyPagesPage = lazy(() => import('./pages/MyPagesPage').then((module) => ({ default: module.MyPagesPage })));
+const AdminPage = lazy(() => import('./pages/admin/AdminPage').then((module) => ({ default: module.AdminPage })));
+
+const AlertsPage = lazy(() => import('./pages/AlertsPage').then((module) => ({ default: module.AlertsPage })));
+const BenchmarksPage = lazy(() => import('./pages/BenchmarksPage').then((module) => ({ default: module.BenchmarksPage })));
+
+// Instantiate the global TanStack Query Client
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false, // Avoid unsolicited refetches on window focus
+      staleTime: 60_000,
+      gcTime: 10 * 60_000,
+      retry: 1, // retry once on failure
+    },
+  },
+});
+
+const RouteLoader = () => (
+  <div className="flex min-h-[45vh] items-center justify-center">
+    <div className="flex flex-col items-center gap-3 rounded-xl border border-stone-200 bg-white px-6 py-5 shadow-sm">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent"></div>
+      <p className="text-xs font-bold uppercase tracking-wider text-stone-500">Loading workspace</p>
+    </div>
+  </div>
+);
+
+const ScrollToTop = () => {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
+  return null;
+};
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <ScrollToTop />
+        <NativeShell />
+        <AuthProvider>
+          <Layout>
+            <Suspense fallback={<RouteLoader />}>
+              <Routes>
+                {/* Public Routes */}
+                <Route path="/" element={<HomePage />} />
+                <Route path="/articles" element={<ArticlesPage />} />
+                <Route path="/articles/:slug" element={<ArticleDetailPage />} />
+                <Route path="/tools" element={<ToolsPage />} />
+                <Route path="/tutorials" element={<Navigate to="/tools" replace />} />
+                <Route path="/guides" element={<TutorialsPage />} />
+                <Route path="/tutorials/:slug" element={<TutorialDetailPage />} />
+                                <Route path="/videos" element={<VideosPage />} />
+                <Route path="/videos/:slug" element={<VideoDetailPage />} />
+                <Route path="/courses" element={<CoursesPage />} />
+                <Route path="/make-money" element={<MakeMoneyPage />} />
+                <Route path="/make-money/:slug" element={<EarnStoryDetailPage />} />
+                <Route path="/projects" element={<ProjectsPage />} />
+                <Route path="/projects/:slug" element={<ProjectDetailPage />} />
+                <Route path="/premium" element={<PremiumPage />} />
+                <Route
+                  path="/create"
+                  element={
+                    <ProtectedRoute>
+                      <CreatePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/create/:pageId"
+                  element={
+                    <ProtectedRoute>
+                      <CreatePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/my-pages"
+                  element={
+                    <ProtectedRoute>
+                      <MyPagesPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="/showcase" element={<ShowcasePage />} />
+                <Route path="/showcase/:showcasePostId" element={<ShowcasePostDetailPage />} />
+                <Route path="/alerts" element={<AlertsPage />} />
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+
+                {/* Guarded User Routes */}
+                <Route
+                  path="/onboarding"
+                  element={
+                    <ProtectedRoute>
+                      <OnboardingPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/showcase/new"
+                  element={
+                    <ProtectedRoute>
+                      <ShowcaseNewPostPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/settings"
+                  element={
+                    <ProtectedRoute>
+                      <ProfilePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/me"
+                  element={
+                    <ProtectedRoute>
+                      <ProfilePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/bookmarks"
+                  element={
+                    <ProtectedRoute>
+                      <BookmarksPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Guarded Admin Routes */}
+                <Route
+                  path="/admin"
+                  element={
+                    <ProtectedRoute>
+                      <AdminRoute>
+                        <AdminPage />
+                      </AdminRoute>
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Catch-all Fallback */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+
+                <Route path="/benchmarks" element={<BenchmarksPage />} />
+              </Routes>
+            </Suspense>
+          </Layout>
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
+  );
+}
